@@ -1,0 +1,11 @@
+<component name="libraryTable">
+  <library name="sbt: io.prometheus:simpleclient_tracer_common:0.16.0:jar" external-system-id="SBT">
+    <CLASSES>
+      <root url="jar://$USER_HOME$/Library/Caches/Coursier/v1/https/artifactory.tcsbank.ru/artifactory/maven-all/io/prometheus/simpleclient_tracer_common/0.16.0/simpleclient_tracer_common-0.16.0.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/Library/Caches/Coursier/v1/https/artifactory.tcsbank.ru/artifactory/maven-all/io/prometheus/simpleclient_tracer_common/0.16.0/simpleclient_tracer_common-0.16.0-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

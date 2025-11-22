@@ -1,44 +1,34 @@
 import cats.effect.{IO, IOApp, Resource}
-import cats.syntax.all.*
 import com.comcast.ip4s.Port
 import fs2.Stream
 import io.circe.generic.semiauto.*
 import io.circe.{Decoder, Encoder}
 import io.prometheus.client.exporter.common.TextFormat
-import io.prometheus.client.{CollectorRegistry, Counter, Histogram}
+import io.prometheus.client.{CollectorRegistry, Counter, Gauge, Histogram}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client
 import org.http4s.dsl.io.*
 import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.ember.server.EmberServerBuilder
-import org.http4s.headers.{Authorization, `Content-Type`}
-import org.typelevel.ci.CIString
+import org.http4s.headers.`Content-Type`
 
-import java.time.Instant
-import java.time.temporal.ChronoUnit
 import scala.concurrent.duration.*
 
-object Prober extends IOApp.Simple {
+object Main extends IOApp.Simple {
 
   final case class Config(
                            oncallBaseUrl: Uri,
                            period: FiniteDuration,
-                           clientTimeout: FiniteDuration,
                            proberPort: Int,
-                           checkerPort: Int,
-                           sageBaseUrl: Uri,
-                           sageToken: String
                          )
 
-  final case class PostMetricBody(
-                                   query: String,
-                                   size: Int,
-                                   startTime: String,
-                                   endTime: String
-                                 )
+  final case class CreateTeamRequest(
+                                      name: String,
+                                      scheduling_timezone: String = "US/Pacific"
+                                    )
 
-  implicit val enc: Encoder[PostMetricBody] = deriveEncoder
+  implicit val createTeamRequestEncoder: Encoder[CreateTeamRequest] = deriveEncoder
 
   final case class Hit(value: Double)
 
@@ -54,18 +44,16 @@ object Prober extends IOApp.Simple {
   private val requestCounter: Counter =
     Counter
       .build()
-      .name("prober_requests_total")
+      .name("create_team_requests_total")
       .help("Total number of HTTP requests attempted by prober")
-      .labelNames("endpoint", "result")
+      .labelNames("result")
       .register(registry)
 
-  private val latencyHistogram: Histogram =
-    Histogram
+  private val latencyGauge: Gauge =
+    Gauge
       .build()
-      .name("prober_request_duration_seconds")
+      .name("watch_teams_request_duration_seconds")
       .help("HTTP request duration in seconds by endpoint")
-      .labelNames("endpoint")
-      .buckets(0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0)
       .register(registry)
 
   private def metricsRoutes(reg: CollectorRegistry): HttpRoutes[IO] = HttpRoutes.of[IO] {
@@ -85,41 +73,22 @@ object Prober extends IOApp.Simple {
     client.status(Request[IO](Method.GET, uri)).timed.attempt.flatMap {
       case Right((dur, status)) =>
         val seconds = dur.toNanos.toDouble / 1e9
-        IO.pure(latencyHistogram.labels(uri.renderString).observe(seconds))
+        IO.pure(latencyGauge.set(seconds))
       case Left(_) => IO.unit
     }
   }
-  
+
   private def probeCreateTeam(client: Client[IO]): IO[Unit] = {
-    
-  }
+    val createRequest = CreateTeamRequest("MetricTestTeam")
 
-  def lastValue(client: Client[IO], query: String): IO[Double] = {
+    val uri = cfg.oncallBaseUrl / "teams"
 
-    val now = Instant.now().truncatedTo(ChronoUnit.MINUTES)
-    val start = now.minus(1, ChronoUnit.MINUTES).toString
-    val end = now.plus(1, ChronoUnit.MINUTES).toString
-    val body = PostMetricBody(query, size = 1, startTime = start, endTime = end)
-
-    val uri = Uri.unsafeFromString(s"${cfg.sageBaseUrl.renderString}/mage/api/search")
-
-    val authHeader: Authorization =
-      Authorization(Credentials.Token(AuthScheme.Bearer, cfg.sageToken))
-
-
-    val sourceHeader: Header.ToRaw =
-      Header.Raw(CIString("SOURCE"), "metric-prober")
-
-    val req = Request[IO](method = POST, uri = uri)
-      .withEntity(body)
-      .putHeaders(authHeader, sourceHeader)
-
-    client.expect[HitsResponse](req).flatMap { r =>
-      r.hits.headOption match {
-        case Some(hit) => IO.pure(hit.value)
-        case None => IO.raiseError(new RuntimeException("Empty hits in response"))
-      }
-    }
+    client.status(Request[IO](Method.POST, uri).withEntity(createRequest)).timed.attempt.flatMap {
+      case Right((dur, status)) =>
+        val result = if (status.isSuccess) "success" else "failure"
+        IO.pure(requestCounter.labels(result).inc())
+      case Left(_) => IO.pure(requestCounter.labels("failure").inc())
+    } *> client.status(Request[IO](Method.DELETE, uri / createRequest.name)).attempt.as(())
   }
 
   private def probeStream(
@@ -132,17 +101,12 @@ object Prober extends IOApp.Simple {
   private val cfg: Config = Config(
     oncallBaseUrl = Uri.unsafeFromString("http://oncall.st-ab2-klinin.ingress.sre-ab.ru"),
     period = 5.seconds,
-    clientTimeout = 4.seconds,
-    proberPort = 8080,
-    checkerPort = 8081,
-    sageBaseUrl = Uri.unsafeFromString("https://sage.sre-ab.ru"),
-    sageToken = ""
+    proberPort = 8889
   )
 
-  private def clientResource(timeout: FiniteDuration): Resource[IO, org.http4s.client.Client[IO]] =
+  private def clientResource: Resource[IO, org.http4s.client.Client[IO]] =
     EmberClientBuilder
       .default[IO]
-      .withTimeout(timeout)
       .build
 
   private def serverResource(app: HttpApp[IO], port: Int): Resource[IO, org.http4s.server.Server] =
@@ -157,7 +121,7 @@ object Prober extends IOApp.Simple {
 
     val res =
       for {
-        client <- clientResource(cfg.clientTimeout)
+        client <- clientResource
         _ <- serverResource(app, cfg.proberPort)
       } yield client
 

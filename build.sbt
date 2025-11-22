@@ -1,6 +1,6 @@
-ThisBuild / version := "0.1.0-SNAPSHOT"
+ThisBuild / version := "1"
 
-ThisBuild / scalaVersion := "3.3.7"
+ThisBuild / scalaVersion := "3.5.2"
 
 lazy val root = (project in file("."))
   .settings(
@@ -18,5 +18,9 @@ libraryDependencies ++= Seq(
   "org.http4s" %% "http4s-circe" % "0.23.25",
   "io.circe" %% "circe-core" % "0.14.7",
   "io.circe" %% "circe-generic" % "0.14.7",
-  "io.circe" %% "circe-parser" % "0.14.7"
+  "io.circe" %% "circe-parser" % "0.14.7",
+  "ch.qos.logback" % "logback-classic" % "1.5.16"
 )
+
+enablePlugins(JavaAppPackaging)
+enablePlugins(DockerPlugin)
